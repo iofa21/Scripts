@@ -7,8 +7,12 @@
 # Aqui ta baixando um pacote chamado pacman, que carrega e baixa arquivos de uma vez e mais rápido, caso não tenha rode a linha abaixo sem o # 
 #if(!require(pacman)) install.packages('pacman', repos = c('https://trinker.r-universe.dev', 'https://cloud.r-project.org'))
 pacman::p_load(sp,ecospat,here,tidyverse,sf,randomcoloR,stars,readxl,colorspace,geodata,ade4,terra,reshape2,knitr)
+
+library(rnaturalearth)
+
 getwd()
 dir()
+
 # Carregamento dos pontos  de  Ocorrência----
 #Crie em seu diretório uma pasta para seus Dados, que terá seus pontos de ocorrência que serão filtrados 
 #para isso clique aqui ao lado na aba FILES aperte em NEW FOLDER, nesse script minha pasta se chama "Dados" mas mude como desejar
@@ -48,9 +52,13 @@ pontos_occ.list2 <- do.call(rbind, pontos_occ.list) %>%
   tibble::rownames_to_column(var = "Especie") %>%
   mutate(Especie = gsub("\\..*", "", Especie),
          Especie = factor(Especie, g.names))
+mapa <- ne_countries(
+  continent = "South America",
+  scale = "medium",
+  returnclass = "sf"
+)
 
-mapa <- sf::st_read(dsn ="C:/Users/WORKSTATION/Igor/Neotropico/Am_Sul_Completa.shp" ,
-                    quiet = T)# Parte que escolhe o Mapa, substituir pelas áreas de endemismo
+
 sf::sf_use_s2(FALSE)
 
 limits <- range(pontos_occ.list2$longitude)
@@ -66,7 +74,6 @@ g <- ggplot() +                                                    #Verificaçã
   xlab("") +
   ylab("") +
   coord_sf(xlim = limits, ylim = lat_limits) +
-  
   theme(
     strip.text = element_text(face = "italic"),
     legend.text = element_text(face = "italic"),
@@ -78,7 +85,7 @@ ggsave(loc, g)
 
 # Filtrar para os países que estão localizados
 
-map <- mapa[mapa$nome %in% c("Brasil"), ]  
+map <- mapa[mapa$name_pt %in% c("Brasil"), ]  
 pnts_sf <- st_as_sf(x = pontos_occ.list2,
                     coords = c('longitude', 'latitude'),
                     crs = st_crs(map))
@@ -105,6 +112,16 @@ mcp <- function(xy) {
 #Carregamentodos dos Dados ambientais----
 variavel <- list.files (path = "Preditores/Current", pattern = "\\.tif$", full.names = T) %>% #Caminho para a pasta das variáveis recortadas
   terra::rast()
+variavel <- geodata::worldclim_global(
+  var  = "bio",
+  res  = 10,  # resolução em minutos: 10, 5, 2.5 ou 0.5
+  path = "Preditores/Current"
+) |>   
+  terra::crop(terra::vect(mapa)) |>
+  terra::mask(terra::vect(mapa))
+
+
+
 
 names(variavel)                                                    #Checagem visual das  variáveis
 plot(variavel)
@@ -333,7 +350,7 @@ round(sim, digits = 3)
 
 
 sim.teste <- sim 
-sim.teste <- round(sim.teste, digits = 3)
+sim.teste <- round(sim.teste, digits = 4)
 sim.teste <- melt(sim.teste)
 
 
@@ -414,7 +431,6 @@ unf_heatmap <- ggplot(unfilling.teste, aes(Var1, Var2, fill = value)) +
                        midpoint = 0, na.value = "grey92",
                        name = "Valores de Nichos") +
   labs(title    = "Nichos Perdidos",
-       subtitle = "* p<0.05  ** p<0.01  *** p<0.001",
        x = NULL, y = NULL) +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
 unf_heatmap
@@ -482,7 +498,6 @@ Est_heatmap <- ggplot(stability.teste, aes(Var1, Var2, fill = value)) +
                        midpoint = 0, na.value = "grey92",
                        name = "Valores de Nicho") +
   labs(title    = "Nicho estáveis",
-       subtitle = "* p<0.05  ** p<0.01  *** p<0.001",
        x = NULL, y = NULL) +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
 Est_heatmap
@@ -550,9 +565,6 @@ Nicho.esp <- ecospat.plot.niche (z[[1]],
                                  name.axis2 = "PC2",
                                  cor=FALSE)
 dev.off()
-ggsave(loc, Nicho.esp) 
-
-
 
 
 
@@ -570,7 +582,6 @@ Nicho.esp.2 <- ecospat.plot.niche (z[[2]],
                                    name.axis2 = "PC2",
                                    cor=FALSE)
 dev.off()
-ggsave(loc, Nicho.esp.2) 
 
 
 Nicho.esp <- ecospat.plot.niche (z[[1]], 
@@ -580,37 +591,27 @@ Nicho.esp <- ecospat.plot.niche (z[[1]],
                                  cor=FALSE)
 
 dev.off()
-ggsave(loc, Nicho.esp) 
-
-
 
 
 #Imagem da contribuição de cada variável para o eixo da PCA. 
 #Verifique o código da variável em <http://www.worldclim.org/bioclim> ou em sua planilha.
 
-loadings <- cbind(cor(data.env, pca.cal$tab[,1]), cor(data.env, pca.cal$tab[,2]))
+loadings <- pca.cal$co / sqrt(sum(pca.cal$lw))
 colnames(loadings) <- c("axis1", "axis2")
 loadings <- loadings[c(1, 12:19, 2:11), ]
-
-barplot(loadings[,1], las=2, main="PC1")
-
-barplot(loadings[,2], las=2, main="PC2")
+rownames(loadings) <- gsub("wc2.1_10m_","", rownames(pca.cal$co))
+barplot(setNames(loadings[, 1], rownames(loadings)), las=2, main="PC1")
+barplot(setNames(loadings[, 2], rownames(loadings)), las=2, main="PC2")
 
 #Visualização em setas diretamente no espaço ambiental.
-contrib <- pca.cal$co
+
 eigen <- pca.cal$eig
-nomes <- numeric(20)
-for(i in 1:20){
-  nomes[i] <- paste('bio',i, sep="")
-}
-s.corcircle(contrib[, 1:2] / max(abs(contrib[, 1:2])), 
-            grid = F,  label = nomes, clabel = 1.2)
+s.corcircle(loadings[, 1:2] / max(abs(loadings[, 1:2])), 
+            grid = F,  label = rownames(loadings), clabel = 1.2)
 text(0, -1.1, paste("PC1 (", round(eigen[1]/sum(eigen)*100,2),"%)",
                     sep = ""))
 text(1.1, 0, paste("PC2 (", round(eigen[2]/sum(eigen)*100,2),"%)",
                    sep = ""), srt = 90)
-
-
 
 
 #####testes pos analise
